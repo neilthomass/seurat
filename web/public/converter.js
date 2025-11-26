@@ -163,12 +163,84 @@ class VideoToAsciiConverter {
         });
     }
 
+    async extractAudio(videoFile) {
+        const audioContext = new AudioContext();
+        const arrayBuffer = await videoFile.arrayBuffer();
+
+        try {
+            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+            return audioBuffer;
+        } catch (e) {
+            console.log('No audio track or failed to decode audio');
+            return null;
+        }
+    }
+
+    audioBufferToWav(audioBuffer) {
+        const numChannels = audioBuffer.numberOfChannels;
+        const sampleRate = audioBuffer.sampleRate;
+        const format = 1; // PCM
+        const bitDepth = 16;
+
+        const bytesPerSample = bitDepth / 8;
+        const blockAlign = numChannels * bytesPerSample;
+
+        const samples = audioBuffer.length;
+        const dataSize = samples * blockAlign;
+        const bufferSize = 44 + dataSize;
+
+        const buffer = new ArrayBuffer(bufferSize);
+        const view = new DataView(buffer);
+
+        // WAV header
+        const writeString = (offset, string) => {
+            for (let i = 0; i < string.length; i++) {
+                view.setUint8(offset + i, string.charCodeAt(i));
+            }
+        };
+
+        writeString(0, 'RIFF');
+        view.setUint32(4, bufferSize - 8, true);
+        writeString(8, 'WAVE');
+        writeString(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, format, true);
+        view.setUint16(22, numChannels, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, sampleRate * blockAlign, true);
+        view.setUint16(32, blockAlign, true);
+        view.setUint16(34, bitDepth, true);
+        writeString(36, 'data');
+        view.setUint32(40, dataSize, true);
+
+        // Interleave channels and write samples
+        const channels = [];
+        for (let i = 0; i < numChannels; i++) {
+            channels.push(audioBuffer.getChannelData(i));
+        }
+
+        let offset = 44;
+        for (let i = 0; i < samples; i++) {
+            for (let ch = 0; ch < numChannels; ch++) {
+                const sample = Math.max(-1, Math.min(1, channels[ch][i]));
+                const intSample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+                view.setInt16(offset, intSample, true);
+                offset += 2;
+            }
+        }
+
+        return buffer;
+    }
+
     async convert(videoFile, options = {}) {
         const { fps = 15, asciiWidth = 120 } = options;
 
         const video = document.createElement('video');
         video.muted = true;
         video.playsInline = true;
+
+        // Extract audio in parallel
+        const audioPromise = this.extractAudio(videoFile);
 
         return new Promise((resolve, reject) => {
             video.onloadedmetadata = async () => {
@@ -197,7 +269,8 @@ class VideoToAsciiConverter {
 
                     this.onProgress({ stage: 'encoding', percent: 90 });
 
-                    const result = await this.createMp4FromFrames(frames, fps);
+                    const audioBuffer = await audioPromise;
+                    const result = await this.createMp4FromFrames(frames, fps, audioBuffer);
 
                     this.onProgress({ stage: 'complete', percent: 100 });
 
@@ -212,7 +285,7 @@ class VideoToAsciiConverter {
         });
     }
 
-    async createMp4FromFrames(frames, fps) {
+    async createMp4FromFrames(frames, fps, audioBuffer = null) {
         if (frames.length === 0) {
             throw new Error('No frames to encode');
         }
@@ -225,17 +298,17 @@ class VideoToAsciiConverter {
 
         // Use VideoEncoder API with mp4-muxer for proper MP4 output
         if (typeof VideoEncoder !== 'undefined' && typeof Mp4Muxer !== 'undefined') {
-            return await this.encodeWithVideoEncoder(frames, fps, width, height, canvas, ctx);
+            return await this.encodeWithVideoEncoder(frames, fps, width, height, canvas, ctx, audioBuffer);
         }
 
         // Fallback to MediaRecorder (WebM)
         return await this.encodeWithMediaRecorder(frames, fps, width, height, canvas, ctx);
     }
 
-    async encodeWithVideoEncoder(frames, fps, width, height, canvas, ctx) {
+    async encodeWithVideoEncoder(frames, fps, width, height, canvas, ctx, audioBuffer = null) {
         return new Promise(async (resolve, reject) => {
             try {
-                const muxer = new Mp4Muxer.Muxer({
+                const muxerConfig = {
                     target: new Mp4Muxer.ArrayBufferTarget(),
                     video: {
                         codec: 'avc',
@@ -243,11 +316,22 @@ class VideoToAsciiConverter {
                         height: height
                     },
                     fastStart: 'in-memory'
-                });
+                };
+
+                // Add audio track if available
+                if (audioBuffer) {
+                    muxerConfig.audio = {
+                        codec: 'aac',
+                        numberOfChannels: audioBuffer.numberOfChannels,
+                        sampleRate: audioBuffer.sampleRate
+                    };
+                }
+
+                const muxer = new Mp4Muxer.Muxer(muxerConfig);
 
                 let encoderClosed = false;
 
-                const encoder = new VideoEncoder({
+                const videoEncoder = new VideoEncoder({
                     output: (chunk, meta) => {
                         muxer.addVideoChunk(chunk, meta);
                     },
@@ -257,13 +341,33 @@ class VideoToAsciiConverter {
                     }
                 });
 
-                encoder.configure({
+                videoEncoder.configure({
                     codec: 'avc1.640028',
                     width: width,
                     height: height,
                     bitrate: 5_000_000,
                     framerate: fps
                 });
+
+                // Set up audio encoder if we have audio
+                let audioEncoder = null;
+                if (audioBuffer && typeof AudioEncoder !== 'undefined') {
+                    audioEncoder = new AudioEncoder({
+                        output: (chunk, meta) => {
+                            muxer.addAudioChunk(chunk, meta);
+                        },
+                        error: (e) => {
+                            console.error('AudioEncoder error:', e);
+                        }
+                    });
+
+                    audioEncoder.configure({
+                        codec: 'mp4a.40.2',
+                        numberOfChannels: audioBuffer.numberOfChannels,
+                        sampleRate: audioBuffer.sampleRate,
+                        bitrate: 128000
+                    });
+                }
 
                 const frameDuration = 1_000_000 / fps; // microseconds
 
@@ -279,7 +383,7 @@ class VideoToAsciiConverter {
                     images.push(img);
                 }
 
-                // Encode all frames
+                // Encode all video frames
                 for (let i = 0; i < images.length; i++) {
                     if (encoderClosed) break;
 
@@ -290,7 +394,7 @@ class VideoToAsciiConverter {
                         duration: frameDuration
                     });
 
-                    encoder.encode(videoFrame, { keyFrame: i % 30 === 0 });
+                    videoEncoder.encode(videoFrame, { keyFrame: i % 30 === 0 });
                     videoFrame.close();
 
                     this.onProgress({
@@ -301,8 +405,38 @@ class VideoToAsciiConverter {
                     });
                 }
 
-                await encoder.flush();
-                encoder.close();
+                // Encode audio if available
+                if (audioEncoder && audioBuffer) {
+                    const numberOfChannels = audioBuffer.numberOfChannels;
+                    const sampleRate = audioBuffer.sampleRate;
+                    const totalSamples = audioBuffer.length;
+
+                    // Create interleaved Float32Array
+                    const interleaved = new Float32Array(totalSamples * numberOfChannels);
+                    for (let i = 0; i < totalSamples; i++) {
+                        for (let ch = 0; ch < numberOfChannels; ch++) {
+                            interleaved[i * numberOfChannels + ch] = audioBuffer.getChannelData(ch)[i];
+                        }
+                    }
+
+                    const audioData = new AudioData({
+                        format: 'f32-planar',
+                        sampleRate: sampleRate,
+                        numberOfFrames: totalSamples,
+                        numberOfChannels: numberOfChannels,
+                        timestamp: 0,
+                        data: interleaved
+                    });
+
+                    audioEncoder.encode(audioData);
+                    audioData.close();
+
+                    await audioEncoder.flush();
+                    audioEncoder.close();
+                }
+
+                await videoEncoder.flush();
+                videoEncoder.close();
                 encoderClosed = true;
                 muxer.finalize();
 
