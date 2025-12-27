@@ -15,6 +15,12 @@ class VideoToAsciiConverter {
         this.onProgress = options.onProgress || (() => {});
         this.maxWidth = 1920;
         this.maxHeight = 1080;
+        this.colorQuantization = 8; // Round colors to nearest multiple of 8
+        this.maskedPixels = options.maskedPixels || new Set(); // Set of "x,y" strings
+    }
+
+    quantizeColor(value) {
+        return Math.round(value / this.colorQuantization) * this.colorQuantization;
     }
 
     getBrightness(r, g, b) {
@@ -91,12 +97,12 @@ class VideoToAsciiConverter {
         return imageData;
     }
 
-    frameToAscii(sourceCanvas, outputCanvas, asciiWidth) {
+    frameToAscii(sourceCanvas, outputCanvas, asciiWidth, captureText = false, squarePixels = false) {
         const sourceCtx = sourceCanvas.getContext('2d');
         const outputCtx = outputCanvas.getContext('2d');
 
         const aspectRatio = sourceCanvas.height / sourceCanvas.width;
-        const charAspect = this.charHeight / this.charWidth;
+        const charAspect = squarePixels ? 1 : (this.charHeight / this.charWidth);
         const asciiHeight = Math.floor(asciiWidth * aspectRatio / charAspect);
 
         let imgWidth = asciiWidth * this.charWidth;
@@ -131,21 +137,28 @@ class VideoToAsciiConverter {
         imageData = this.maximizeContrast(imageData);
         const pixels = imageData.data;
 
-        // Render ASCII at full resolution first
-        const fullWidth = asciiWidth * this.charWidth;
-        const fullHeight = asciiHeight * this.charHeight;
+        // Render at full resolution first
+        const cellSize = squarePixels ? this.charWidth : this.charWidth;
+        const cellHeight = squarePixels ? this.charWidth : this.charHeight; // Square uses same size for both
+        const fullWidth = asciiWidth * cellSize;
+        const fullHeight = asciiHeight * cellHeight;
         const asciiCanvas = document.createElement('canvas');
         asciiCanvas.width = fullWidth;
         asciiCanvas.height = fullHeight;
         const asciiCtx = asciiCanvas.getContext('2d');
 
-        asciiCtx.fillStyle = '#ffffff';
+        asciiCtx.fillStyle = '#f5f0e8';
         asciiCtx.fillRect(0, 0, fullWidth, fullHeight);
 
         asciiCtx.font = '14px monospace';
         asciiCtx.textBaseline = 'top';
 
+        // Capture text data if requested (2D array of [char, rgb color string])
+        const textData = captureText ? [] : null;
+
         for (let y = 0; y < asciiHeight; y++) {
+            const currentRow = captureText ? [] : null;
+
             for (let x = 0; x < asciiWidth; x++) {
                 const idx = (y * asciiWidth + x) * 4;
                 const r = pixels[idx];
@@ -154,22 +167,54 @@ class VideoToAsciiConverter {
 
                 const { char, color } = this.getColorAsciiChar(r, g, b);
 
-                if (char === null) continue;
+                if (captureText) {
+                    // Use empty string for white pixels
+                    const brightness = this.getBrightness(color.r, color.g, color.b);
+                    if (brightness >= this.whiteThreshold) {
+                        currentRow.push("");
+                    } else if (color.r === color.g && color.g === color.b) {
+                        // Grayscale: just the value
+                        currentRow.push(color.r);
+                    } else {
+                        // Color: [r,g,b]
+                        currentRow.push([color.r, color.g, color.b]);
+                    }
+                }
 
-                const posX = x * this.charWidth;
-                const posY = y * this.charHeight;
-                asciiCtx.fillStyle = `rgb(${color.r}, ${color.g}, ${color.b})`;
-                asciiCtx.fillText(char, posX, posY);
+                if (squarePixels) {
+                    // Draw circle for square pixel preview
+                    const brightness = this.getBrightness(color.r, color.g, color.b);
+                    if (brightness < this.whiteThreshold) {
+                        const cellSize = this.charWidth; // Use charWidth as cell size for square
+                        const posX = x * cellSize + cellSize / 2;
+                        const posY = y * cellSize + cellSize / 2;
+                        const circleSize = Math.min(1, (1 - brightness / 255) + 0.3);
+                        const radius = (cellSize / 2) * circleSize;
+                        asciiCtx.fillStyle = `rgb(${color.r}, ${color.g}, ${color.b})`;
+                        asciiCtx.beginPath();
+                        asciiCtx.arc(posX, posY, radius, 0, Math.PI * 2);
+                        asciiCtx.fill();
+                    }
+                } else {
+                    if (char === null) continue;
+
+                    const posX = x * this.charWidth;
+                    const posY = y * this.charHeight;
+                    asciiCtx.fillStyle = `rgb(${color.r}, ${color.g}, ${color.b})`;
+                    asciiCtx.fillText(char, posX, posY);
+                }
             }
+
+            if (captureText) textData.push(currentRow);
         }
 
         // Scale down to output canvas (capped at 1080p)
         outputCtx.drawImage(asciiCanvas, 0, 0, fullWidth, fullHeight, 0, 0, imgWidth, imgHeight);
 
-        return { width: imgWidth, height: imgHeight };
+        return { width: imgWidth, height: imgHeight, textData };
     }
 
-    async extractFrames(video, targetFps, onFrame) {
+    async extractFrames(video, targetFps, onFrame, skipStartFrames = 0, skipEndFrames = 0) {
         return new Promise((resolve, reject) => {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
@@ -177,9 +222,11 @@ class VideoToAsciiConverter {
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
 
-            const duration = video.duration;
             const frameInterval = 1 / targetFps;
-            const totalFrames = Math.floor(duration * targetFps);
+            const totalVideoFrames = Math.floor(video.duration * targetFps);
+            const startFrame = skipStartFrames;
+            const endFrame = totalVideoFrames - skipEndFrames;
+            const totalFrames = Math.max(0, endFrame - startFrame);
 
             let currentFrame = 0;
 
@@ -189,7 +236,7 @@ class VideoToAsciiConverter {
                     return;
                 }
 
-                const time = currentFrame * frameInterval;
+                const time = (startFrame + currentFrame) * frameInterval;
                 video.currentTime = time;
             };
 
@@ -282,14 +329,13 @@ class VideoToAsciiConverter {
         return buffer;
     }
 
-    async convert(videoFile, options = {}) {
-        const { fps = 15, asciiWidth = 120, includeAudio = true } = options;
+    async convertToMp4(videoFile, options = {}) {
+        const { fps = 10, asciiWidth = 300, includeAudio = true, skipStartFrames = 0, skipEndFrames = 0 } = options;
 
         const video = document.createElement('video');
         video.muted = true;
         video.playsInline = true;
 
-        // Extract audio in parallel if requested
         const audioPromise = includeAudio ? this.extractAudio(videoFile) : Promise.resolve(null);
 
         return new Promise((resolve, reject) => {
@@ -301,7 +347,7 @@ class VideoToAsciiConverter {
                     this.onProgress({ stage: 'loading', percent: 0 });
 
                     await this.extractFrames(video, fps, (frameCanvas, frameNum, totalFrames) => {
-                        const { width, height } = this.frameToAscii(frameCanvas, outputCanvas, asciiWidth);
+                        const { width, height } = this.frameToAscii(frameCanvas, outputCanvas, asciiWidth, false);
 
                         frames.push({
                             data: outputCanvas.toDataURL('image/png'),
@@ -315,16 +361,168 @@ class VideoToAsciiConverter {
                             total: totalFrames,
                             percent: 50 + Math.round(((frameNum + 1) / totalFrames) * 40)
                         });
-                    });
+                    }, skipStartFrames, skipEndFrames);
 
                     this.onProgress({ stage: 'encoding', percent: 90 });
 
                     const audioBuffer = await audioPromise;
                     const result = await this.createMp4FromFrames(frames, fps, audioBuffer);
 
+                    result.duration = frames.length / fps;
+
                     this.onProgress({ stage: 'complete', percent: 100 });
 
                     resolve(result);
+                } catch (err) {
+                    reject(err);
+                }
+            };
+
+            video.onerror = () => reject(new Error('Failed to load video'));
+            video.src = URL.createObjectURL(videoFile);
+        });
+    }
+
+    async convertToText(videoFile, options = {}) {
+        const { fps = 10, asciiWidth = 300, skipStartFrames = 0, skipEndFrames = 0, squarePixels = false } = options;
+
+        const video = document.createElement('video');
+        video.muted = true;
+        video.playsInline = true;
+
+        return new Promise((resolve, reject) => {
+            video.onloadedmetadata = async () => {
+                try {
+                    const outputCanvas = document.createElement('canvas');
+                    const textFrames = [];
+                    let asciiHeight = 0;
+
+                    this.onProgress({ stage: 'loading', percent: 0 });
+
+                    await this.extractFrames(video, fps, (frameCanvas, frameNum, totalFrames) => {
+                        const { textData } = this.frameToAscii(frameCanvas, outputCanvas, asciiWidth, true, squarePixels);
+
+                        textFrames.push(textData);
+                        if (frameNum === 0) {
+                            asciiHeight = textData.length;
+                        }
+
+                        this.onProgress({
+                            stage: 'converting',
+                            current: frameNum + 1,
+                            total: totalFrames,
+                            percent: Math.round(((frameNum + 1) / totalFrames) * 100)
+                        });
+                    }, skipStartFrames, skipEndFrames);
+
+                    this.onProgress({ stage: 'complete', percent: 100 });
+
+                    resolve({
+                        textFrames,
+                        fps,
+                        asciiWidth,
+                        asciiHeight,
+                        duration: textFrames.length / fps
+                    });
+                } catch (err) {
+                    reject(err);
+                }
+            };
+
+            video.onerror = () => reject(new Error('Failed to load video'));
+            video.src = URL.createObjectURL(videoFile);
+        });
+    }
+
+    async convertToBinaryRGB(videoFile, options = {}) {
+        const { fps = 10, asciiWidth = 300, skipStartFrames = 0, skipEndFrames = 0 } = options;
+
+        const video = document.createElement('video');
+        video.muted = true;
+        video.playsInline = true;
+
+        return new Promise((resolve, reject) => {
+            video.onloadedmetadata = async () => {
+                try {
+                    const outputCanvas = document.createElement('canvas');
+                    const rgbFrames = [];
+                    let asciiHeight = 0;
+
+                    this.onProgress({ stage: 'loading', percent: 0 });
+
+                    await this.extractFrames(video, fps, (frameCanvas, frameNum, totalFrames) => {
+                        // Get the processed image data at ASCII resolution
+                        const sourceCtx = frameCanvas.getContext('2d');
+                        const aspectRatio = frameCanvas.height / frameCanvas.width;
+                        const charAspect = 1; // Square pixels for binary format
+                        asciiHeight = Math.floor(asciiWidth * aspectRatio / charAspect);
+
+                        const tempCanvas = document.createElement('canvas');
+                        tempCanvas.width = asciiWidth;
+                        tempCanvas.height = asciiHeight;
+                        const tempCtx = tempCanvas.getContext('2d');
+
+                        tempCtx.drawImage(frameCanvas, 0, 0, asciiWidth, asciiHeight);
+                        let imageData = tempCtx.getImageData(0, 0, asciiWidth, asciiHeight);
+
+                        // Apply contrast and exposure adjustments
+                        imageData = this.applyContrastExposure(imageData);
+                        imageData = this.maximizeContrast(imageData);
+                        const pixels = imageData.data;
+
+                        // Extract RGB values for each pixel
+                        const frameRGB = new Uint8Array(asciiWidth * asciiHeight * 3);
+                        for (let y = 0; y < asciiHeight; y++) {
+                            for (let x = 0; x < asciiWidth; x++) {
+                                const i = (y * asciiWidth + x) * 4;
+                                const j = (y * asciiWidth + x) * 3;
+                                const r = pixels[i];
+                                const g = pixels[i + 1];
+                                const b = pixels[i + 2];
+
+                                // Check if pixel is masked (deleted by user)
+                                const key = `${x},${y}`;
+                                if (this.maskedPixels.has(key)) {
+                                    frameRGB[j] = 255;
+                                    frameRGB[j + 1] = 255;
+                                    frameRGB[j + 2] = 255;
+                                    continue;
+                                }
+
+                                // Check if pixel should be white (empty)
+                                const brightness = this.getBrightness(r, g, b);
+                                if (brightness >= this.whiteThreshold) {
+                                    frameRGB[j] = 255;
+                                    frameRGB[j + 1] = 255;
+                                    frameRGB[j + 2] = 255;
+                                } else {
+                                    frameRGB[j] = r;
+                                    frameRGB[j + 1] = g;
+                                    frameRGB[j + 2] = b;
+                                }
+                            }
+                        }
+
+                        rgbFrames.push(frameRGB);
+
+                        this.onProgress({
+                            stage: 'converting',
+                            current: frameNum + 1,
+                            total: totalFrames,
+                            percent: Math.round(((frameNum + 1) / totalFrames) * 100)
+                        });
+                    }, skipStartFrames, skipEndFrames);
+
+                    this.onProgress({ stage: 'complete', percent: 100 });
+
+                    resolve({
+                        rgbFrames,
+                        fps,
+                        width: asciiWidth,
+                        height: asciiHeight,
+                        frameCount: rgbFrames.length,
+                        duration: rgbFrames.length / fps
+                    });
                 } catch (err) {
                     reject(err);
                 }

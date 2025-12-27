@@ -1,28 +1,3 @@
-// Output storage utilities (shared with app.js)
-const OutputStorage = {
-    STORAGE_KEY: 'ascii_video_outputs',
-
-    getAll() {
-        try {
-            const data = localStorage.getItem(this.STORAGE_KEY);
-            return data ? JSON.parse(data) : [];
-        } catch (e) {
-            console.error('Failed to load outputs from storage:', e);
-            return [];
-        }
-    },
-
-    getById(id) {
-        const outputs = this.getAll();
-        return outputs.find(o => o.id === id);
-    },
-
-    formatDate(timestamp) {
-        const date = new Date(timestamp);
-        return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    }
-};
-
 document.addEventListener('DOMContentLoaded', () => {
     const jsonFileInput = document.getElementById('jsonFile');
     const loadingStatus = document.getElementById('loadingStatus');
@@ -38,8 +13,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const rerenderBtn = document.getElementById('rerenderBtn');
     const charsInput = document.getElementById('chars');
     const charsGroup = document.getElementById('charsGroup');
-    const savedOutputsSection = document.getElementById('savedOutputsSection');
-    const savedOutputsSelect = document.getElementById('savedOutputs');
     const modeAsciiBtn = document.getElementById('modeAscii');
     const modeDotsBtn = document.getElementById('modeDots');
 
@@ -50,116 +23,6 @@ document.addEventListener('DOMContentLoaded', () => {
     let animationId = null;
     let lastFrameTime = 0;
     let renderMode = 'ascii'; // 'ascii' or 'dots'
-
-    // Populate saved outputs dropdown
-    function populateSavedOutputs() {
-        const outputs = OutputStorage.getAll();
-
-        if (outputs.length === 0) {
-            savedOutputsSection.classList.add('hidden');
-            return;
-        }
-
-        savedOutputsSection.classList.remove('hidden');
-        savedOutputsSelect.innerHTML = '<option value="">-- Choose a saved output --</option>';
-
-        outputs.forEach(output => {
-            const option = document.createElement('option');
-            option.value = output.id;
-            option.textContent = `${output.name} (${output.dimensions}, ${OutputStorage.formatDate(output.timestamp)})`;
-            savedOutputsSelect.appendChild(option);
-        });
-    }
-
-    // Load from URL parameter
-    function loadFromUrlParam() {
-        const urlParams = new URLSearchParams(window.location.search);
-        const outputId = urlParams.get('output');
-
-        if (outputId) {
-            const output = OutputStorage.getById(outputId);
-            if (output && output.data) {
-                loadFromSavedOutput(output);
-                savedOutputsSelect.value = outputId;
-            }
-        }
-    }
-
-    // Load from saved output
-    async function loadFromSavedOutput(output) {
-        hideError();
-        playerContainer.classList.add('hidden');
-        loadingStatus.classList.remove('hidden');
-        loadingStatus.textContent = 'Loading saved output...';
-
-        try {
-            // Decode base64 to binary
-            const binaryString = atob(output.data);
-            const bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-            }
-            const blob = new Blob([bytes], { type: 'application/gzip' });
-
-            loadingStatus.textContent = 'Decompressing...';
-            const text = await decompressGzip(blob);
-
-            loadingStatus.textContent = 'Parsing JSONL...';
-            const data = parseJsonl(text);
-
-            loadingStatus.textContent = 'Validating format...';
-            const validationError = validateFormat(data);
-            if (validationError) {
-                showError(validationError);
-                return;
-            }
-
-            videoData = data;
-
-            loadingStatus.textContent = `Pre-rendering ${data.metadata.frameCount} frames...`;
-            await new Promise(r => setTimeout(r, 10));
-
-            prerenderFrames();
-
-            timeline.max = renderedFrames.length - 1;
-            timeline.value = 0;
-            currentFrame = 0;
-
-            const duration = data.metadata.duration || (data.metadata.frameCount / data.metadata.fps);
-            videoInfo.textContent = `${data.metadata.width}x${data.metadata.height} chars | ${data.metadata.fps} fps | ${data.metadata.frameCount} frames | ${formatTime(duration)}`;
-
-            loadingStatus.classList.add('hidden');
-            playerContainer.classList.remove('hidden');
-
-            calculateFontSize();
-            showFrame(0);
-            playBtn.textContent = 'Play';
-            isPlaying = false;
-
-        } catch (err) {
-            showError(`Failed to load saved output: ${err.message}`);
-        }
-    }
-
-    // Handle saved outputs dropdown change
-    savedOutputsSelect.addEventListener('change', async () => {
-        const outputId = savedOutputsSelect.value;
-        if (!outputId) return;
-
-        const output = OutputStorage.getById(outputId);
-        if (output && output.data) {
-            // Update URL without reload
-            const url = new URL(window.location);
-            url.searchParams.set('output', outputId);
-            window.history.pushState({}, '', url);
-
-            await loadFromSavedOutput(output);
-        }
-    });
-
-    // Initialize
-    populateSavedOutputs();
-    loadFromUrlParam();
 
     function showError(message) {
         errorDiv.classList.remove('hidden');
@@ -242,12 +105,27 @@ document.addEventListener('DOMContentLoaded', () => {
         const charWidth = videoData.metadata.width;
         const charHeight = videoData.metadata.height;
 
-        const maxFontByWidth = containerWidth / (charWidth * 0.6);
-        const maxFontByHeight = containerHeight / charHeight;
+        if (renderMode === 'dots') {
+            // For SVG mode, set container dimensions based on aspect ratio
+            const aspectRatio = charHeight / charWidth;
+            const maxWidth = Math.min(containerWidth, 1200);
+            const calculatedHeight = maxWidth * aspectRatio;
+            const finalHeight = Math.min(calculatedHeight, containerHeight);
+            const finalWidth = finalHeight / aspectRatio;
 
-        const maxFontSize = Math.min(maxFontByWidth, maxFontByHeight);
-        const fontSize = isFullscreen ? maxFontSize : Math.min(maxFontSize, 14);
-        videoFrame.style.fontSize = fontSize + 'px';
+            videoFrame.style.width = finalWidth + 'px';
+            videoFrame.style.height = finalHeight + 'px';
+            videoFrame.style.fontSize = '';
+        } else {
+            const maxFontByWidth = containerWidth / (charWidth * 0.6);
+            const maxFontByHeight = containerHeight / charHeight;
+
+            const maxFontSize = Math.min(maxFontByWidth, maxFontByHeight);
+            const fontSize = isFullscreen ? maxFontSize : Math.min(maxFontSize, 14);
+            videoFrame.style.fontSize = fontSize + 'px';
+            videoFrame.style.width = '';
+            videoFrame.style.height = '';
+        }
     }
 
     function validateFormat(data) {
@@ -345,21 +223,15 @@ document.addEventListener('DOMContentLoaded', () => {
         return { char: ' ', color: "rgb(255,255,255)" };
     }
 
-    function getDotChar(brightness) {
-        // Use unicode circles of varying sizes based on brightness
-        // Darker = larger dot, lighter = smaller dot or space
-        if (brightness >= 240) return ' ';
-        if (brightness >= 200) return '·';  // small dot
-        if (brightness >= 160) return '•';  // bullet
-        if (brightness >= 120) return '●';  // black circle
-        if (brightness >= 80) return '◉';   // fisheye
-        return '⬤';  // large circle
-    }
-
     function prerenderFrames() {
         renderedFrames = [];
         const asciiChars = charsInput.value || 'F$V* ';
         const useDots = renderMode === 'dots';
+
+        if (useDots) {
+            prerenderSvgFrames();
+            return;
+        }
 
         for (let f = 0; f < videoData.frames.length; f++) {
             const frame = videoData.frames[f];
@@ -374,29 +246,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 for (let x = 0; x < row.length; x++) {
                     const { char, color } = parsePixel(row[x], asciiChars);
 
-                    // In dots mode, convert to dot character based on brightness
-                    let displayChar = char;
-                    if (useDots) {
-                        const pixel = row[x];
-                        let brightness = 255;
-                        if (pixel === '' || pixel === null) {
-                            brightness = 255;
-                        } else if (typeof pixel === 'number') {
-                            brightness = pixel;
-                        } else if (Array.isArray(pixel) && pixel.length === 3) {
-                            brightness = getBrightness(pixel[0], pixel[1], pixel[2]);
-                        }
-                        displayChar = getDotChar(brightness);
-                    }
-
                     if (color === currentColor) {
-                        currentChars += escapeHtml(displayChar);
+                        currentChars += escapeHtml(char);
                     } else {
                         if (currentChars.length > 0) {
                             lineHtml += `<span style="color:${currentColor}">${currentChars}</span>`;
                         }
                         currentColor = color;
-                        currentChars = escapeHtml(displayChar);
+                        currentChars = escapeHtml(char);
                     }
                 }
 
@@ -408,6 +265,54 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             renderedFrames.push(lines.join('\n'));
+        }
+    }
+
+    function prerenderSvgFrames() {
+        const width = videoData.metadata.width;
+        const height = videoData.metadata.height;
+        const cellSize = 10; // Base cell size for SVG
+        const svgWidth = width * cellSize;
+        const svgHeight = height * cellSize;
+        const whiteThreshold = 240;
+
+        for (let f = 0; f < videoData.frames.length; f++) {
+            const frame = videoData.frames[f];
+            let circles = '';
+
+            for (let y = 0; y < frame.length; y++) {
+                const row = frame[y];
+                for (let x = 0; x < row.length; x++) {
+                    const pixel = row[x];
+                    let r = 255, g = 255, b = 255;
+
+                    if (pixel === '' || pixel === null) {
+                        continue; // Skip white pixels
+                    } else if (typeof pixel === 'number') {
+                        r = g = b = pixel;
+                    } else if (Array.isArray(pixel) && pixel.length === 3) {
+                        [r, g, b] = pixel;
+                    } else {
+                        continue;
+                    }
+
+                    const brightness = getBrightness(r, g, b);
+                    if (brightness >= whiteThreshold) {
+                        continue; // Skip bright pixels
+                    }
+
+                    // Calculate circle size based on brightness (darker = larger)
+                    const circleSize = Math.min(1, (1 - brightness / 255) + 0.3);
+                    const radius = (cellSize / 2) * circleSize;
+                    const cx = x * cellSize + cellSize / 2;
+                    const cy = y * cellSize + cellSize / 2;
+
+                    circles += `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="rgb(${r},${g},${b})"/>`;
+                }
+            }
+
+            const svg = `<svg viewBox="0 0 ${svgWidth} ${svgHeight}" preserveAspectRatio="xMidYMid meet" style="width:100%;height:100%;background:#f5f0e8">${circles}</svg>`;
+            renderedFrames.push(svg);
         }
     }
 

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Seurat</title>
-    <link rel="icon" href="favicon.ico" type="image/x-icon">
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&display=swap" rel="stylesheet">
@@ -26,15 +26,8 @@
         <h1>Player</h1>
         <p class="subtitle">play exported ascii video files</p>
 
-        <div id="savedOutputsSection" class="output-selector hidden">
-            <label for="savedOutputs">Select from saved outputs</label>
-            <select id="savedOutputs">
-                <option value="">-- Choose a saved output --</option>
-            </select>
-        </div>
-
         <div class="form-group">
-            <label for="jsonFile">Or upload a JSONL.GZ File</label>
+            <label for="jsonFile">Upload a JSONL.GZ File</label>
             <input type="file" id="jsonFile" accept=".jsonl.gz,.gz">
             <span class="file-info">Select a compressed ASCII video file exported from the converter</span>
         </div>
@@ -43,7 +36,7 @@
             <label>Render Mode</label>
             <div class="render-mode-toggle">
                 <button type="button" id="modeAscii" class="render-mode-btn active">ASCII</button>
-                <button type="button" id="modeDots" class="render-mode-btn">Dots</button>
+                <button type="button" id="modeDots" class="render-mode-btn">SVG</button>
             </div>
         </div>
 
