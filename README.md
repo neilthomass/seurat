@@ -10,10 +10,6 @@ Convert videos into ASCII art animations entirely in the browser.
 - Preserves colors from original video
 - Built-in player with ASCII and dots render modes
 
-## Usage
-
-Visit [seurat.neiltthomas.com](https://seurat.neiltthomas.com) or run locally:
-
 ```bash
 cd web
 npm install
