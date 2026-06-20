@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/components/hero.tsx","./src/lib/converter.ts","./src/lib/player.ts","./src/lib/seurat.ts","./src/pages/converter.tsx","./src/pages/player.tsx","./src/wasm/converter.d.ts","./src/wasm/converter.js"],"version":"5.9.3"}
