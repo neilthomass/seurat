@@ -1,0 +1,162 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: 'Hanken Grotesk', system-ui, sans-serif;
+  --font-sans: 'Hanken Grotesk', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
+  /* legacy aliases */
+  --font-cormorant: 'Hanken Grotesk', system-ui, sans-serif;
+  --font-goudy: 'Hanken Grotesk', system-ui, sans-serif;
+
+  --color-paper: #fcfcfc;
+  --color-panel: #f5f5f4;
+  --color-ink: #191917;
+  --color-muted: #5f5e5b;
+  --color-faint: #9b9a96;
+  --color-line: #eae9e6;
+  --color-accent: #18181b;
+}
+
+* { box-sizing: border-box; }
+html, body { min-height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.6;
+  letter-spacing: -0.006em;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+}
+
+::selection { background: color-mix(in srgb, var(--color-accent) 20%, transparent); }
+a { color: inherit; text-decoration: none; }
+
+/* Monospace micro-label — the "optical instrument" voice. */
+.mono { font-family: var(--font-mono); font-feature-settings: "tnum"; }
+.eyebrow {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-muted);
+}
+.label {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-faint);
+}
+
+.hairline { border: 1px solid var(--color-line); }
+
+.card {
+  background: var(--color-paper);
+  border: 1px solid var(--color-line);
+  border-radius: 16px;
+}
+.card-raised { box-shadow: 0 1px 0 rgba(25, 25, 23, 0.02), 0 24px 60px -30px rgba(25, 25, 23, 0.22); }
+
+.field {
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  color: var(--color-ink);
+  background: var(--color-paper);
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  padding: 11px 13px;
+  transition: border-color .15s, box-shadow .15s;
+}
+.field:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0;
+  padding: 11px 20px;
+  border-radius: 10px;
+  background: var(--color-ink);
+  color: var(--color-paper);
+  border: 1px solid var(--color-ink);
+  cursor: pointer;
+  transition: transform .1s, opacity .15s, background .15s;
+}
+.btn:hover { background: #000; }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: .35; cursor: not-allowed; }
+.btn-accent { background: var(--color-accent); border-color: var(--color-accent); }
+.btn-accent:hover { background: #000; }
+.btn-ghost { background: transparent; color: var(--color-ink); border-color: var(--color-line); }
+.btn-ghost:hover { background: var(--color-panel); }
+:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+
+/* Range slider — hairline track, small ringed dot. */
+.slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 16px;
+  background: transparent;
+  cursor: pointer;
+}
+.slider::-webkit-slider-runnable-track { height: 2px; border-radius: 999px; background: var(--color-line); }
+.slider::-moz-range-track { height: 2px; border-radius: 999px; background: var(--color-line); }
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px; height: 12px; margin-top: -5px;
+  border-radius: 50%;
+  background: var(--color-ink);
+  transition: transform .12s, background .12s;
+}
+.slider::-moz-range-thumb { width: 12px; height: 12px; border: none; border-radius: 50%; background: var(--color-ink); }
+.slider:hover::-webkit-slider-thumb { background: var(--color-accent); transform: scale(1.18); }
+.slider:focus-visible::-webkit-slider-thumb { background: var(--color-accent); }
+
+/* Dual-handle range: two transparent tracks stacked; only thumbs are live. */
+.range-dual {
+  -webkit-appearance: none;
+  appearance: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  pointer-events: none;
+}
+.range-dual::-webkit-slider-runnable-track { background: transparent; height: 100%; }
+.range-dual::-moz-range-track { background: transparent; height: 100%; }
+.range-dual::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  pointer-events: auto;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--color-ink); border: 2px solid var(--color-paper);
+  box-shadow: 0 1px 3px rgba(25,25,23,.3);
+  cursor: grab;
+}
+.range-dual::-moz-range-thumb {
+  pointer-events: auto;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--color-ink); border: 2px solid var(--color-paper);
+  cursor: grab;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
